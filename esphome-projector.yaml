@@ -1,8 +1,5 @@
 esphome:
   name: "esphome-projector"
-  includes:
-  - uart_read_line_sensor.h
-
   # https://esphome.io/components/esphome.html#esphome-on-boot
   # we don't know the power state of the projector right after the esp has booted
   # so our first job is to ask the projector
@@ -27,9 +24,70 @@ logger:
 # set up the pins we'll use to talk to the projector
 uart:
   id: uart_bus
+  parity: NONE
+  stop_bits: 1
   tx_pin: GPIO01
   rx_pin: GPIO03
   baud_rate: 9600
+  debug:
+    direction: BOTH
+    dummy_receiver: true
+    after:
+      delimiter: [0x0D]
+    sequence:
+      - lambda: |-
+          UARTDebug::log_string(direction, bytes);
+
+          // if this is an outgoing message, we can bail immediately
+          if (direction == uart::UART_DIRECTION_TX) return;
+
+          // convert the bytes to a string that we can work with
+          std::string x(bytes.begin(), bytes.end());
+          // the string always ends with a newline, let's remove that
+          if (!x.empty()) x.pop_back();
+          // for some reason, the projector sometimes replies in mixed case, make sure we always deal with all caps
+          x = str_upper_case(x);
+
+          bool handled = false;
+
+          ESP_LOGD("projector", "incoming message: %s", x.c_str());
+
+          // if we are waiting for the projector to respond to a command.
+          // it will respond P (pass) or F (fail) before giving us the actual response to the command. 
+          if (x == "P" || x == "F") {
+            // now that the projector has responded to our command, we're ready to get the next message. 
+            // we return nothing here and parse that on the next time the lambda gets called
+
+            id(waiting_for_command_response) = false;
+            ESP_LOGD("projector", "command response received");
+            handled = true;
+          } 
+
+          // assuming any commands have been dealt with above, we listen for messages from the projector
+          // the OK-something messages are in response to status queries, sometimes these are in caps, sometimes not
+          // hence the toUpperCase call earlier
+          // the INFO messages come in automatically when the projector changes state
+
+          if (x == "OK1"   || // status query returned power on
+              x == "INFO1" ) { // warming up
+            id(projector_power).publish_state(true);
+            handled = true;
+          }
+
+          if (x == "OK0"   || // status query returned power off
+              x == "INFO2" || // cooling down
+              x == "INFO0" ) {   // going into standby
+              id(projector_power).publish_state(false);
+              handled = true;
+          }
+
+          if (x == "OK1")   id(power_state).publish_state("On");
+          if (x == "INFO1") id(power_state).publish_state("Warmup");
+          if (x == "OK0")   id(power_state).publish_state("Off");
+          if (x == "INFO2") id(power_state).publish_state("Cooldown");
+          if (x == "INFO0") id(power_state).publish_state("Off"); // this is strictly "standby", but the projector won't auto-update after this message
+
+          if (!handled) ESP_LOGD("projector", "unhandled message: %s", x.c_str());
 
 api:
 
@@ -58,57 +116,6 @@ globals:
   type: bool
   restore_value: no
   initial_value: 'false'
-
-text_sensor:
-# This sets up the custom sensor to read UART (required for switch status)
-- platform: custom
-  lambda: |-
-    auto my_custom_sensor = new UartReadLineSensor(id(uart_bus));
-    App.register_component(my_custom_sensor);
-    return {my_custom_sensor};
-  text_sensors:
-    id: "uart_readline"
-    internal: true
-    # most of the time, the projector will respond in upper case, but not always. 
-    # lets force upper case here to make our job easier
-    filters: 
-      - to_upper:
-    # we deal with anything the projector responds here instead of polling, seems more efficient
-    on_value:
-      then:
-        - lambda: |-
-            bool handled = false;
-
-            // if we are waiting for the projector to respond to a command.
-            // it will respond P (pass) or F (fail) before giving us the actual response to the command. 
-            if (x == "P" || x == "F") {
-              // now that the projector has responded to our command, we're ready to get the next message. 
-              // we return nothing here and parse that on the next time the lambda gets called
-
-              id(waiting_for_command_response) = false;
-              ESP_LOGD("projector", "command response received");
-              handled = true;
-            } 
-
-            // assuming any commands have been dealt with above, we listen for messages from the projector
-            // the OK-something messages are in response to status queries, sometimes these are in caps, sometimes not
-            // hence the toUpperCase call earlier
-            // the INFO messages come in automatically when the projector changes state
-
-            if (x == "OK1"   || // status query returned power on
-                x == "INFO1" ) { // warming up
-              id(projector_power).publish_state(true);
-              handled = true;
-            }
-            
-            if (x == "OK0"   || // status query returned power off
-                x == "INFO2" || // cooling down
-                x == "INFO0" ) {   // going into standby
-                id(projector_power).publish_state(false);
-                handled = true;
-            } 
-            
-            if (!handled) ESP_LOGD("projector", "unhandled message: %s", x.c_str());
 
 switch:
   - platform: template
@@ -165,3 +172,8 @@ rtttl:
   output: rtttl_out
   on_finished_playback:
     - logger.log: 'Song ended!'
+
+text_sensor:
+  - platform: template
+    name: "Power State"
+    id: power_state
