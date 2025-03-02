@@ -13,8 +13,8 @@ esphome:
       - logger.log: "querying projector state on esp startup:"
       - uart.write: [0x7E, 0x30, 0x30, 0x31, 0x32, 0x34, 0x20, 0x31, 0x0D]
 
-esp8266:
-  board: d1_mini
+esp32:
+  board: esp32dev
 
 logger:
   # baud rate has to be set to zero to disable logging over uart
@@ -26,8 +26,8 @@ uart:
   id: uart_bus
   parity: NONE
   stop_bits: 1
-  tx_pin: GPIO01
-  rx_pin: GPIO03
+  tx_pin: 22
+  rx_pin: 19
   baud_rate: 9600
   debug:
     direction: BOTH
@@ -90,7 +90,8 @@ uart:
           if (!handled) ESP_LOGD("projector", "unhandled message: %s", x.c_str());
 
 api:
-
+  encryption:
+    key: !secret esphome_encryption_key
 ota:
   - platform: esphome
 
@@ -125,12 +126,6 @@ switch:
     optimistic: true
 
     turn_on_action:
-      - if:
-          condition:
-            lambda: |-
-              return id(first_response_received);
-          then:
-            - rtttl.play: 'three_up:d=4,o=5,b=100:16c5,16d5,16e5'
       # first set the flag to denote we have a command response to wait for
       - globals.set:
           id: waiting_for_command_response
@@ -142,12 +137,6 @@ switch:
       - uart.write: [0x7E, 0x30, 0x30, 0x30, 0x30, 0x20, 0x31, 0x0D]       
     
     turn_off_action:
-      - if:
-          condition:
-            lambda: |-
-                return id(first_response_received);
-          then:
-            - rtttl.play: 'three_up:d=4,o=5,b=100:16e5,16d5,16c5'
       # first set the flag to denote we have a command response to wait for
       - globals.set:
           id: waiting_for_command_response
@@ -156,23 +145,8 @@ switch:
           id: first_response_received
           value: 'true'
       # send the turn off command
-      - uart.write: [0x7E, 0x30, 0x30, 0x30, 0x30, 0x20, 0x30, 0x0D]
+      - uart.write: [0x7E, 0x30, 0x30, 0x30, 0x30, 0x20, 0x32, 0x0D]
   
-  - platform: gpio
-    pin: D2
-    name: "Projector Screen"
-    icon: "mdi:projector-screen"
-
-output:
-  - platform: esp8266_pwm
-    pin: D1
-    id: rtttl_out
-
-rtttl:
-  output: rtttl_out
-  on_finished_playback:
-    - logger.log: 'Song ended!'
-
 text_sensor:
   - platform: template
     name: "Power State"
