@@ -1,3 +1,6 @@
+Changed to work with the M5 AtomLite ESP32 Board and the Optoma UHD51, also removed the Piezo Sound
+
+
 
 
 This project allows for remote power control of an [Optoma UHD35](https://www.optomaeurope.com/product-details/uhd35) projector (and possibly other models) via [ESPHome](https://esphome.io/) and [Home Assistant](https://www.home-assistant.io/). 
